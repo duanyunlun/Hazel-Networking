@@ -1,11 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Net;
-using System.Net.Sockets;
-using System.Text;
-using System.Threading;
 
 namespace Hazel.Udp
 {
@@ -15,7 +8,7 @@ namespace Hazel.Udp
     /// <inheritdoc />
     public abstract partial class UdpConnection : NetworkConnection
     {
-        protected static readonly byte[] DisconnectBytes = new byte[] { (byte)UdpSendOption.Disconnect };
+        protected static readonly byte[] EmptyDisconnectBytes = new byte[] { (byte)UdpSendOption.Disconnect };
 
         /// <summary>
         ///     Creates a new UdpConnection and initializes the keep alive timer.
@@ -31,16 +24,9 @@ namespace Hazel.Udp
         /// <param name="bytes">The bytes to write.</param>
         protected abstract void WriteBytesToConnection(byte[] bytes, int length);
 
-        /// <summary>
-        ///     Writes the given bytes to the connection synchronously.
-        /// </summary>
-        /// <param name="bytes">The bytes to write.</param>
-        protected abstract void WriteBytesToConnectionSync(byte[] bytes, int length);
-
         /// <inheritdoc/>
         public override void Send(MessageWriter msg)
         {
-            //Early check
             if (this._state != ConnectionState.Connected)
                 throw new InvalidOperationException("Could not send data as this Connection is not connected. Did you disconnect?");
 
@@ -135,7 +121,9 @@ namespace Hazel.Udp
                     break;
 
                 case (byte)UdpSendOption.Disconnect:
-                    Disconnect("The remote sent a disconnect request", true);
+                    message.Offset = 1;
+                    message.Position = 0;
+                    DisconnectRemote("The remote sent a disconnect request", message);
                     message.Recycle();
                     break;
                     

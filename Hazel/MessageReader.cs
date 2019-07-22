@@ -1,10 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Diagnostics;
-using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
-using System.Threading;
 
 namespace Hazel
 {
@@ -53,6 +49,18 @@ namespace Hazel
             output.Position = 0;
             output.Length = buffer.Length;
             output.Tag = byte.MaxValue;
+            
+            return output;
+        }
+
+        public static MessageReader CopyMessageIntoParent(MessageReader source)
+        {
+            var output = MessageReader.GetSized(source.Length + 3);
+            System.Buffer.BlockCopy(source.Buffer, source.Offset - 3, output.Buffer, 0, source.Length + 3);
+
+            output.Offset = 0;
+            output.Position = 0;
+            output.Length = source.Length + 3;
             
             return output;
         }

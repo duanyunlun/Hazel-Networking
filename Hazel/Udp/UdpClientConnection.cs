@@ -1,9 +1,6 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Net;
 using System.Net.Sockets;
-using System.Text;
 using System.Threading;
 
 
@@ -41,7 +38,7 @@ namespace Hazel.Udp
                     throw new InvalidOperationException("IPV6 not supported!");
 
                 socket = new Socket(AddressFamily.InterNetworkV6, SocketType.Dgram, ProtocolType.Udp);
-                socket.SetSocketOption(SocketOptionLevel.IPv6, (SocketOptionName)27, false);    //TODO these lines shouldn't be needed anymore
+                socket.SetSocketOption(SocketOptionLevel.IPv6, SocketOptionName.IPv6Only, false);
             }
 
             reliablePacketTimer = new Timer(ManageReliablePacketsInternal, null, 100, Timeout.Infinite);
@@ -90,59 +87,34 @@ namespace Hazel.Udp
                     length,
                     SocketFlags.None,
                     RemoteEndPoint,
-                    delegate (IAsyncResult result)
-                    {
-                        try
-                        {
-                            socket.EndSendTo(result);
-                        }
-                        catch (NullReferenceException) { }
-                        catch (ObjectDisposedException)
-                        {
-                            Disconnect("Could not send as the socket was disposed of.");
-                        }
-                        catch (SocketException)
-                        {
-                            Disconnect("Could not send data as a SocketException occured.");
-                        }
-                    },
-                    null
-                );
+                    HandleSendTo,
+                    null);
             }
+            catch (NullReferenceException) { }
             catch (ObjectDisposedException)
             {
-                //User probably called Disconnect in between this method starting and here so report the issue
-                throw new InvalidOperationException("Could not send data as this Connection is not connected. Did you disconnect?");
+                // Already disposed and disconnected...
             }
-            catch (SocketException)
+            catch (SocketException ex)
             {
-                Disconnect("Could not send data as a SocketException occured.");
-                throw;
+                Disconnect("Could not send data as a SocketException occured: " + ex.Message);
             }
         }
 
-        protected override void WriteBytesToConnectionSync(byte[] bytes, int length)
+        private void HandleSendTo(IAsyncResult result)
         {
-            DataSentRaw?.Invoke(bytes, length);
-
             try
             {
-                socket.SendTo(
-                    bytes,
-                    0,
-                    length,
-                    SocketFlags.None,
-                    RemoteEndPoint);
+                socket.EndSendTo(result);
             }
+            catch (NullReferenceException) { }
             catch (ObjectDisposedException)
             {
-                //User probably called Disconnect in between this method starting and here so report the issue
-                throw new InvalidOperationException("Could not send data as this Connection is not connected. Did you disconnect?");
+                // Already disposed and disconnected...
             }
-            catch (SocketException)
+            catch (SocketException ex)
             {
-                Disconnect("Could not send data as a SocketException occured.");
-                throw;
+                Disconnect("Could not send data as a SocketException occured: " + ex.Message);
             }
         }
 
@@ -167,7 +139,6 @@ namespace Hazel.Udp
         {
             this.State = ConnectionState.Connecting;
 
-            //Begin listening
             try
             {
                 if (IPMode == IPMode.IPv4)
@@ -177,7 +148,7 @@ namespace Hazel.Udp
             }
             catch (SocketException e)
             {
-                State = ConnectionState.NotConnected;
+                this.State = ConnectionState.NotConnected;
                 throw new HazelException("A socket exception occured while binding to the port.", e);
             }
 
@@ -187,9 +158,9 @@ namespace Hazel.Udp
             }
             catch (ObjectDisposedException)
             {
-                //If the socket's been disposed then we can just end there but make sure we're in NotConnected state.
-                //If we end up here I'm really lost...
-                State = ConnectionState.NotConnected;
+                // If the socket's been disposed then we can just end there but make sure we're in NotConnected state.
+                // If we end up here I'm really lost...
+                this.State = ConnectionState.NotConnected;
                 return;
             }
             catch (SocketException e)
@@ -198,9 +169,9 @@ namespace Hazel.Udp
                 throw new HazelException("A Socket exception occured while initiating a receive operation.", e);
             }
 
-            //Write bytes to the server to tell it hi (and to punch a hole in our NAT, if present)
-            //When acknowledged set the state to connected
-            SendHello(bytes, () => { State = ConnectionState.Connected; });
+            // Write bytes to the server to tell it hi (and to punch a hole in our NAT, if present)
+            // When acknowledged set the state to connected
+            SendHello(bytes, () => { this.State = ConnectionState.Connected; });
         }
 
         /// <summary>
@@ -290,14 +261,37 @@ namespace Hazel.Udp
 
         /// <summary>
         ///     Sends a disconnect message to the end point.
+        ///     You may include optional disconnect data. The SendOption must be unreliable.
         /// </summary>
-        protected override void SendDisconnect()
+        protected override bool SendDisconnect(MessageWriter data = null)
         {
+            lock (this)
+            {
+                if (this._state != ConnectionState.Connected) return false;
+                this._state = ConnectionState.NotConnected;
+            }
+
+            var bytes = EmptyDisconnectBytes;
+            if (data != null && data.Length > 0)
+            {
+                if (data.SendOption != SendOption.None) throw new ArgumentException("Disconnect messages can only be unreliable.");
+
+                bytes = data.ToByteArray(true);
+                bytes[0] = (byte)UdpSendOption.Disconnect;
+            }
+
             try
             {
-                WriteBytesToConnectionSync(DisconnectBytes, 1);
+                socket.SendTo(
+                    bytes,
+                    0,
+                    bytes.Length,
+                    SocketFlags.None,
+                    RemoteEndPoint);
             }
             catch { }
+
+            return true;
         }
 
         /// <inheritdoc />
@@ -305,12 +299,7 @@ namespace Hazel.Udp
         {
             if (disposing)
             {
-                if (this._state == ConnectionState.Connected
-                    || this._state == ConnectionState.Disconnecting)
-                {
-                    SendDisconnect();
-                    this._state = ConnectionState.NotConnected;
-                }
+                SendDisconnect();
             }
 
             if (this.socket != null)

@@ -1,7 +1,5 @@
 ﻿using System;
 using System.Collections.Concurrent;
-using System.Linq;
-using System.Text;
 using System.Threading;
 
 namespace Hazel
@@ -15,23 +13,22 @@ namespace Hazel
     {
         private int numberCreated;
         public int NumberCreated { get { return numberCreated; } }
+
         public int NumberInUse { get { return this.inuse.Count; } }
+        public int NumberNotInUse { get { return this.pool.Count; } }
 
-        public int Size { get { return this.pool.Count; } }
+        // Available objects
+        private readonly ConcurrentBag<T> pool = new ConcurrentBag<T>();
 
-        /// <summary>
-        ///     Our pool of objects
-        /// </summary>
-        ConcurrentBag<T> pool = new ConcurrentBag<T>();
-
-        private ConcurrentDictionary<T, bool> inuse = new ConcurrentDictionary<T, bool>();
+        // Unavailable objects
+        private readonly ConcurrentDictionary<T, bool> inuse = new ConcurrentDictionary<T, bool>();
 
         /// <summary>
         ///     The generator for creating new objects.
         /// </summary>
         /// <returns></returns>
-        Func<T> objectFactory;
-
+        private readonly Func<T> objectFactory;
+        
         /// <summary>
         ///     Internal constructor for our ObjectPool.
         /// </summary>
@@ -55,7 +52,7 @@ namespace Hazel
 
             if (!inuse.TryAdd(item, true))
             {
-                throw new Exception("Duplicate pull");
+                throw new Exception("Duplicate pull " + typeof(T).Name);
             }
 
             return item;
@@ -73,7 +70,7 @@ namespace Hazel
             }
             else
             {
-                throw new Exception("Duplicate add");
+                throw new Exception("Duplicate add " + typeof(T).Name);
             }
         }
     }
